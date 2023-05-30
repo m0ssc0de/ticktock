@@ -1,11 +1,11 @@
 use prometheus::{IntGaugeVec, Opts};
 
 use core::num;
-use futures::stream::FuturesUnordered;
+use futures::stream::{FuturesUnordered, PollNext};
 use futures::StreamExt;
 use reqwest::{header, Client, Url};
 use serde_json::{json, Value};
-use std::{env, time::Duration};
+use std::{env, process::Command, time::Duration};
 use structopt::StructOpt;
 use tokio::time;
 
@@ -33,6 +33,7 @@ struct Opt {
     gq_target: Vec<(String, Url)>,
     #[structopt(short, long, parse(try_from_str = parse_node_target))]
     node_target: Vec<(String, String, i64, Url)>,
+    job_target: String,
 }
 
 fn parse_gq_target(s: &str) -> Result<(String, Url), &'static str> {
@@ -68,11 +69,12 @@ async fn main() -> Result<(), MError> {
         .parse()
         .unwrap();
 
-    let bh_opts = Opts::new("last_block_height", "the last block height")
-        .const_label("network", "polygon")
-        .const_label("app", "dictionary");
+    let bh_opts =
+        Opts::new("last_block_height", "the last block height").const_label("network", "polygon");
+    // .const_label("app", "dictionary");
     // .const_label("component", "endpoint");
-    let last_block_height_vec = IntGaugeVec::new(bh_opts, &["component", "source_label"]).unwrap();
+    let last_block_height_vec =
+        IntGaugeVec::new(bh_opts, &["app", "component", "source_label"]).unwrap();
     prometheus::register(Box::new(last_block_height_vec.clone())).unwrap();
     prometheus_exporter::start("0.0.0.0:9184".parse().expect("failed to parse binding"))
         .expect("failed to start prometheus exporter");
@@ -93,11 +95,17 @@ async fn main() -> Result<(), MError> {
         for (gq_label, gq_url) in &opt.gq_target {
             gq_futures.push(graphql_rpc(gq_label.to_owned(), gq_url, &client))
         }
+        if !opt.job_target.is_empty() {
+            println!("{}", opt.job_target);
+            last_block_height_vec
+                .with_label_values(&["datasource", "fetching-job", "last-uploaded"])
+                .set(uploaded(&opt.job_target))
+        }
         while let Some(result) = gq_futures.next().await {
             match result {
                 Ok((label, number)) => {
                     last_block_height_vec
-                        .with_label_values(&["query-endpoint", &label])
+                        .with_label_values(&["dictionary", "query-endpoint", &label])
                         .set(number);
                 }
                 Err(e) => {
@@ -109,7 +117,7 @@ async fn main() -> Result<(), MError> {
             match result {
                 Ok((label, number)) => {
                     last_block_height_vec
-                        .with_label_values(&["rpc-endpoint", &label])
+                        .with_label_values(&["node", "rpc-endpoint", &label])
                         .set(number);
                 }
                 Err(e) => {
@@ -118,6 +126,24 @@ async fn main() -> Result<(), MError> {
             }
         }
         interval.tick().await;
+    }
+}
+
+fn uploaded(cfg_name: &str) -> i64 {
+    let output = Command::new("/bin/sh").arg(format!("kubectl -n `cat /var/run/secrets/kubernetes.io/serviceaccount/namespace` get configmap {} -o yaml | grep ED: | cut -d '\"' -f 2", cfg_name)).output().unwrap();
+    let errstr = String::from_utf8_lossy(&output.stderr);
+    if !errstr.is_empty() {
+        println!("Command failed to execute: {}", errstr);
+    }
+    let outstr = String::from_utf8_lossy(&output.stdout);
+    if !outstr.is_empty() {
+        println!("Command output: {}", outstr);
+    }
+    // let number: i64 = outstr.parse().unwrap();
+    if let Ok(number) = outstr.parse::<i64>() {
+        return number;
+    } else {
+        return 0;
     }
 }
 
