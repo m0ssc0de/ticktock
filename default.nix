@@ -15,10 +15,11 @@ let
 in
 pkgs.mkShell {
   buildInputs = [
-    pkgs.darwin.apple_sdk.frameworks.Security
+    #pkgs.darwin.apple_sdk.frameworks.Security
     rust
   ] ++ (with pkgs; [
     clang
+    openssl
     rustup
     rust-analyzer
   ]);

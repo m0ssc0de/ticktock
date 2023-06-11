@@ -14,12 +14,12 @@ RUN cargo build  --release
 
 # We start from a bare Debian image so we don't get any excess libs
 FROM alpine
-RUN apk add
+RUN apk add redis
 
 # Copy the built binary from the builder stage
 COPY --from=builder /app/target/release/ticktock /usr/local/bin
 COPY --from=builder /usr/lib/libgcc_s.so.1 /usr/lib/libgcc_s.so.1
-COPY --from=builder /app/kubectl /user/local/bin/
+COPY --from=builder /app/kubectl /usr/local/bin/
 
 # Run the binary
 CMD ["/usr/local/bin/ticktock"]
