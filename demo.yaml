@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polygon-endpoints-monitors
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: polygon-endpoints-monitors
+  template:
+    metadata:
+      labels:
+        app: polygon-endpoints-monitors
+    spec:
+      serviceAccountName: streaming-job-generator
+      serviceAccount: streaming-job-generator
+      volumes:
+        - name: config-volume
+          configMap:
+            name: polygon-endpoints-monitors
+            items:
+              - key: config.yaml
+                path: config.yaml
+      containers:
+        - name: monitors
+          image: yesq/ticktock:test1
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              ticktock /config.yaml
+          volumeMounts:
+            - name: config-volume
+              mountPath: /config.yaml
+              subPath: config.yaml
+          ports:
+          - name: metrics
+            containerPort: 9184
+            protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: polygon-endpoints-monitors
+  labels:
+    app: polygon-endpoints-monitors
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 9184
+      targetPort: 9184
+  selector:
+    app: polygon-endpoints-monitors
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    network: polygon
+    app: endpoints
+  name: polygon-endpoints-monitors
+  namespace: subquery-data-collector
+spec:
+  endpoints:
+  - interval: 10s
+    path: /metrics
+    port: metrics
+  selector:
+    matchLabels:
+      app: polygon-endpoints-monitors
